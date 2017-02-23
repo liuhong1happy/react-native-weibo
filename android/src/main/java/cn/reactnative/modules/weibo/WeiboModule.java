@@ -13,6 +13,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.NinePatchDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.facebook.common.executors.UiThreadImmediateExecutorService;
@@ -56,6 +57,9 @@ import com.sina.weibo.sdk.auth.Oauth2AccessToken;
 import com.sina.weibo.sdk.auth.WeiboAuthListener;
 import com.sina.weibo.sdk.auth.sso.SsoHandler;
 import com.sina.weibo.sdk.exception.WeiboException;
+import com.sina.weibo.sdk.net.RequestListener;
+import com.sina.weibo.sdk.openapi.UsersAPI;
+import com.sina.weibo.sdk.openapi.models.User;
 
 import java.util.Date;
 
@@ -87,6 +91,7 @@ public class WeiboModule extends ReactContextBaseJavaModule implements ActivityE
     private SsoHandler mSinaSsoHandler;
     private IWeiboShareAPI mSinaShareAPI;
     private String appId;
+    private Oauth2AccessToken mAccessToken;
 
     private static final String RCTWBShareTypeNews = "news";
     private static final String RCTWBShareTypeImage = "image";
@@ -138,6 +143,14 @@ public class WeiboModule extends ReactContextBaseJavaModule implements ActivityE
         AuthInfo sinaAuthInfo = this._genAuthInfo(config);
         mSinaSsoHandler = new SsoHandler(getCurrentActivity(), sinaAuthInfo);
         mSinaSsoHandler.authorize(this.genWeiboAuthListener());
+        callback.invoke();
+    }
+
+    @ReactMethod
+    public void getUserInfo(final Callback callback){
+        UsersAPI sinaUsersApi = new UsersAPI(getReactApplicationContext(),this.appId, mAccessToken);
+        long uid = Long.parseLong(mAccessToken.getUid());
+        sinaUsersApi.show(uid, this.genWeiboUserInfoListener());
         callback.invoke();
     }
 
@@ -211,15 +224,17 @@ public class WeiboModule extends ReactContextBaseJavaModule implements ActivityE
                 final Oauth2AccessToken token = Oauth2AccessToken.parseAccessToken(bundle);
                 WritableMap event = Arguments.createMap();
                 if (token.isSessionValid()) {
-                    event.putString("accessToken", token.getToken());
+                    event.putString("access_token", token.getToken());
                     event.putDouble("expirationDate", token.getExpiresTime());
                     event.putString("userID", token.getUid());
                     event.putString("refreshToken", token.getRefreshToken());
                     event.putInt("errCode", 0);
+                    mAccessToken = token;
                 } else {
 //                    String code = bundle.getString("code", "");
                     event.putInt("errCode", -1);
                     event.putString("errMsg", "token invalid");
+                    mAccessToken = null;
                 }
                 event.putString("type", "WBAuthorizeResponse");
                 getReactApplicationContext().getJSModule(RCTNativeAppEventEmitter.class).emit(RCTWBEventName, event);
@@ -239,6 +254,38 @@ public class WeiboModule extends ReactContextBaseJavaModule implements ActivityE
                 WritableMap event = Arguments.createMap();
                 event.putString("type", "WBAuthorizeResponse");
                 event.putString("errMsg", "Cancel");
+                event.putInt("errCode", -1);
+                getReactApplicationContext().getJSModule(RCTNativeAppEventEmitter.class).emit(RCTWBEventName, event);
+            }
+        };
+    }
+
+
+    RequestListener genWeiboUserInfoListener() {
+        return new RequestListener() {
+            @Override
+            public void onComplete(String response) {
+                if (!TextUtils.isEmpty(response)) {
+                    // 调用 User#parse 将JSON串解析成User对象
+                    User user = User.parse(response);
+                    WritableMap event = Arguments.createMap();
+
+                    event.putString("avatar", user.avatar_hd);
+                    event.putString("gender", user.gender);
+                    event.putString("openid", user.id);
+                    event.putString("nickname", user.screen_name);
+                    event.putInt("errCode", 0);
+                    event.putString("access_token", mAccessToken.getToken());
+                    event.putString("type", "WBUserInfoResponse");
+                    getReactApplicationContext().getJSModule(RCTNativeAppEventEmitter.class).emit(RCTWBEventName, event);
+                }
+            }
+
+            @Override
+            public void onWeiboException(WeiboException e) {
+                WritableMap event = Arguments.createMap();
+                event.putString("type", "WBUserInfoResponse");
+                event.putString("errMsg", e.getMessage());
                 event.putInt("errCode", -1);
                 getReactApplicationContext().getJSModule(RCTNativeAppEventEmitter.class).emit(RCTWBEventName, event);
             }
